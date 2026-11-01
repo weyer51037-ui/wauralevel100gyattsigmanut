@@ -1,0 +1,76 @@
+name: Build Vortex Launcher
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Locate files (works from any folder)
+        shell: bash
+        run: |
+          echo "== Repo contents =="
+          find . -type f -not -path './.git/*' | sort
+          mkdir -p build/classes build/input dist
+          JAVA=$(find . -type f -iname 'VortexLauncher*.java' -not -path './build/*' | head -n1)
+          LOGO=$(find . -type f \( -iname 'vortex-logo.png' -o -iname 'Neon_Purple_Vortex_Emblem.png' \) -not -path './build/*' | head -n1)
+          CLIENT=$(find . -type f -iname 'vortex-client*.jar' -not -path './build/*' | head -n1)
+          echo "Java: $JAVA"; echo "Logo: $LOGO"; echo "Client: $CLIENT"
+          [ -n "$JAVA" ]   || { echo "::error::No VortexLauncher*.java found in repo"; exit 1; }
+          [ -n "$LOGO" ]   || { echo "::error::No vortex-logo.png found in repo"; exit 1; }
+          [ -n "$CLIENT" ] || { echo "::error::No vortex-client*.jar found in repo"; exit 1; }
+          mkdir -p build/src
+          cp "$JAVA" build/src/VortexLauncher.java
+          cp "$LOGO" build/input/vortex-logo.png
+          cp "$CLIENT" build/input/
+
+      - name: Compile launcher
+        shell: bash
+        run: |
+          javac -encoding UTF-8 -Xlint:none -d build/classes build/src/VortexLauncher.java
+          printf 'Main-Class: VortexLauncher\n' > build/manifest.txt
+          jar cfm build/input/VortexLauncher.jar build/manifest.txt -C build/classes .
+
+      - name: Make icon
+        shell: bash
+        run: |
+          python -m pip install pillow
+          python -c "from PIL import Image; Image.open('build/input/vortex-logo.png').convert('RGBA').save('build/vortex.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: Package Windows exe (bundled Java)
+        shell: bash
+        run: jpackage --type app-image --name VortexLauncher --input build/input --main-jar VortexLauncher.jar --main-class VortexLauncher --icon build/vortex.ico --dest dist
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/VortexLauncher -DestinationPath VortexLauncher-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VortexLauncher-windows
+          path: VortexLauncher-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VortexLauncher-jar
+          path: build/input/VortexLauncher.jar
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            VortexLauncher-windows.zip
+            build/input/VortexLauncher.jar
